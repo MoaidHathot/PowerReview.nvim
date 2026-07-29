@@ -252,20 +252,46 @@ public sealed class WorktreeManager
     /// that an external worktree base directory can host worktrees from
     /// multiple repos without collisions.
     /// </summary>
+    /// <remarks>
+    /// The hash MUST be stable across processes. An earlier implementation used
+    /// <c>string.GetHashCode()</c>, which .NET Core randomises per process: every
+    /// CLI invocation produced a different id, so each <c>open</c> minted a brand
+    /// new <c>&lt;name&gt;-&lt;hash&gt;</c> directory and the "worktree already
+    /// exists" check in <see cref="CreateAsync"/> could never hit across
+    /// processes. A single repo accumulated 37 such directories (20 of them
+    /// empty) before this was caught. SHA-256 is content-addressed and therefore
+    /// stable across processes, machines and runtime versions.
+    ///
+    /// On Windows the path is lower-cased before hashing so that
+    /// <c>P:\Work\Repo</c> and <c>p:\work\repo</c> -- which address the same
+    /// directory on a case-insensitive filesystem -- map to the same id.
+    /// </remarks>
     public static string ComputeRepoId(string repoRoot)
     {
         if (string.IsNullOrEmpty(repoRoot))
             return "_";
 
         var full = Path.GetFullPath(repoRoot).Replace('\\', '/').TrimEnd('/');
+
+        // On Windows the filesystem is case-insensitive, so `P:/Work/Repo` and
+        // `p:/work/repo` are the same directory and must yield the same id --
+        // for the name prefix as well as the hash, otherwise one repo still
+        // ends up with two worktree namespaces.
+        if (OperatingSystem.IsWindows())
+            full = full.ToLowerInvariant();
+
         var name = Path.GetFileName(full);
         if (string.IsNullOrEmpty(name))
             name = "repo";
 
-        // Short hash of the full path for uniqueness; keeps the human-readable
-        // repo name as a prefix so the directory layout is still browseable.
-        var hash = (uint)full.GetHashCode();
-        return $"{Sanitize(name)}-{hash:x8}";
+        // Short, stable hash of the full path for uniqueness; keeps the
+        // human-readable repo name as a prefix so the directory layout is
+        // still browseable.
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(full));
+        var hash = Convert.ToHexString(digest, 0, 4).ToLowerInvariant();
+
+        return $"{Sanitize(name)}-{hash}";
     }
 
     private static string Sanitize(string s)

@@ -287,6 +287,20 @@ What this gives you:
 - `always_separate_worktree: true` prevents PowerReview from "reusing" the main checkout when it happens to already be on the PR's source branch, so the review clone stays predictable.
 - AI fix worktrees automatically follow: when `worktree_dir` is absolute, fix worktrees go under `{worktree_dir}/.fixes/<repoId>/<prId>` instead of being written into the repo.
 
+The `<repoId>` segment is `<repo-folder-name>-<8 hex chars>`, where the hex is a
+SHA-256 digest of the absolute repo path (lower-cased on Windows, which has a
+case-insensitive filesystem). It is stable across processes and machines, so a
+given clone always maps to the same directory.
+
+> **Upgrading from 0.18.0 or earlier:** `<repoId>` used to be derived from
+> `string.GetHashCode()`, which .NET randomises per process -- every `open`
+> created a fresh `<name>-<hash>` directory and the worktree de-duplication
+> never matched. If you have been using an absolute `worktree_dir`, expect a
+> pile of stale (often empty) `<name>-<hash>` directories under it. They are
+> safe to delete once the reviews that own them are closed; running
+> `git worktree prune` in the backing clone afterwards clears the dangling
+> administrative entries.
+
 If you instead leave `worktree_dir` relative, worktrees are placed under the configured clone (the legacy default) -- which is fine as long as that clone is dedicated to PowerReview and not used for normal branch work.
 
 ## Authentication

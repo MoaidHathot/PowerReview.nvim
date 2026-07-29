@@ -105,4 +105,54 @@ public class WorktreeManagerPathTests
         var id = WorktreeManager.ComputeRepoId("");
         Assert.Equal("_", id);
     }
+
+    /// <summary>
+    /// Golden-value guard against a process-unstable hash.
+    /// </summary>
+    /// <remarks>
+    /// ComputeRepoId previously used <c>string.GetHashCode()</c>, which .NET Core
+    /// randomises per process. Every CLI invocation therefore produced a
+    /// different directory name, the worktree de-duplication never hit, and
+    /// orphan directories piled up indefinitely.
+    ///
+    /// The existing "stable across calls" test cannot catch that, because both
+    /// calls run inside the same process and so share the same hash seed. Only
+    /// asserting a hard-coded expected value detects it: if the algorithm ever
+    /// reverts to something seed-dependent, this fails on the very first run.
+    /// </remarks>
+    [Fact]
+    public void ComputeRepoId_IsStableAcrossProcesses_GoldenValue()
+    {
+        // Absolute POSIX path so Path.GetFullPath is a no-op on Linux/macOS CI.
+        // Windows would rewrite it against the current drive, so pin the
+        // expectation per-platform.
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows paths are case-insensitive, so these two spellings address
+            // the same directory and must share an id -- prefix included.
+            var upper = WorktreeManager.ComputeRepoId(@"C:\repos\Golden");
+            var lower = WorktreeManager.ComputeRepoId(@"c:\repos\golden");
+            Assert.Equal(upper, lower);
+            Assert.Equal("golden-564e0559", upper);
+        }
+        else
+        {
+            Assert.Equal("golden-7e9c7ee7", WorktreeManager.ComputeRepoId("/repos/golden"));
+        }
+    }
+
+    [Fact]
+    public void ComputeRepoId_DifferentPathsSameLeafName_DoNotCollide()
+    {
+        // Two checkouts of the same repository under different parents must not
+        // share a worktree namespace.
+        var a = WorktreeManager.ComputeRepoId(
+            OperatingSystem.IsWindows() ? @"C:\a\myrepo" : "/a/myrepo");
+        var b = WorktreeManager.ComputeRepoId(
+            OperatingSystem.IsWindows() ? @"C:\b\myrepo" : "/b/myrepo");
+
+        Assert.NotEqual(a, b);
+        Assert.StartsWith("myrepo-", a);
+        Assert.StartsWith("myrepo-", b);
+    }
 }
